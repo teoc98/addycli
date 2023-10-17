@@ -1,0 +1,75 @@
+#!/bin/sh
+
+SECRET_TOOL_ATTRIBUTE="application"
+SECRET_TOOL_VALUE="addy_io_cli"
+
+DB="$HOME/.config/addy_io_cli.sqlite"
+DB_TABLE="PersonalAccessKeys"
+DB_COL_NAME="name"
+DB_COL_KEY="key"
+
+generate_key() {
+	head --bytes=128 /dev/urandom | base64 --wrap=0 | \
+	secret-tool store --label="addy.io CLI" "$SECRET_TOOL_ATTRIBUTE" "$SECRET_TOOL_VALUE" || \
+	{ echo "$0: failed to generate key" >/dev/stderr; exit 3; }
+}
+
+lookup_key() {
+	{ secret-tool lookup "$SECRET_TOOL_ATTRIBUTE" "$SECRET_TOOL_VALUE" || { generate_key && lookup_key; } ; } | base64 --decode | xxd -ps -c 0
+	return $?
+}
+
+
+sql() {
+	sqlcipher "$DB" \
+	-cmd "PRAGMA key = \"x'$(lookup_key)'\";" \
+	-cmd "CREATE TABLE IF NOT EXISTS ${DB_TABLE} (${DB_COL_NAME} TEXT PRIMARY KEY, ${DB_COL_KEY} TEXT);" \
+	$@ | tail -n +2
+}
+
+sqlinsert () {
+	echo "insert into ${DB_TABLE} values (\"$1\", \"$2\"); " | sql
+}
+
+sqlselect () {
+	echo "select ${DB_COL_KEY} from ${DB_TABLE} where ${DB_COL_NAME} = \"$1\";" | sql
+}
+
+sqldelete () {
+	echo "delete from ${DB_TABLE} where ${DB_COL_NAME} = \"$1\";" | sql
+}
+
+sqldump () {
+	echo "select * from ${DB_TABLE};" | sql	
+}
+
+
+usage() {
+	echo "Usage: $0 insert <name> | select <name> | delete <name> | help"
+}
+
+case $1 in
+  help)
+    usage && exit 0
+    ;;
+
+  insert)
+  	[ -z "$2" ] && usage >/dev/stderr && exit 1
+  	read -p "Key: " key
+    sqlinsert "$2" "$key"
+    ;;
+
+  select)
+  	[ -z "$2" ] && usage >/dev/stderr && exit 1
+ 	sqlselect "$2"
+    ;;
+
+  delete)
+  	[ -z "$2" ] && usage >/dev/stderr && exit 1
+ 	sqldelete "$2"
+    ;;
+
+  *)
+    usage >/dev/stderr && exit 1
+    ;;
+esac

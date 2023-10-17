@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+
+PROGNAME="addy"
+
+error () {
+	echo -e "\e[31mERROR: $1\e[0m\nCheck usage: '$PROGNAME --help'"
+	exit 1
+}
+
+help () {
+	DIR=$(dirname -- "${BASH_SOURCE[0]}")
+	client --help
+	echo -e "\
+  --key 				Specifiy Personal Access Key or Personal Access Key name;
+        				use 'addy-keys' to manage keys
+
+  --json				Print the output in JSON format (default)
+  --yaml				Print the output in YAML format (not working)
+  --raw 				Print the raw output
+
+  -R, --raw-input			read each line as string instead of JSON
+  -c, --compact-output			compact instead of pretty-printed output
+  -r, --raw-output			output strings without escapes and quotes
+  -a, --ascii-output			output strings by only ASCII character
+  -S, --sort-keys			sort keys of each object on output
+  -C, --color-output			colorize JSON output
+  -M, --monochrome-output		disable colored output
+      --tab				use tabs for indentation
+      --unbuffered			flush output stream after each output
+      --stream				parse the input value in streaming fashion
+	"
+	exit 0
+}
+
+client () {
+	sh -c ". ${DIR}/client.sh" "$PROGNAME" \
+		--host "https://app.addy.io" \
+		--accept "application/json" \
+		--header "Authorization:\ Bearer\ ${key}" \
+		--no-progress-meter \
+		"$@"
+}
+
+args=("$@") 
+client_args=()
+jq_args=("--color-output")
+
+jq=jq
+
+i=0
+while [ $i -lt $# ]; do
+	arg="${args[i]}"
+	case "$arg" in
+		-R|--raw-input|-c|--compact-output|-r|--raw-output|-a|--ascii-output|-S|--sort-keys|-C|--color-output|-M|--monochrome-output|--tab|--unbuffered|--stream)
+			jq_args+=("$arg")
+			;;
+		--*)
+			opt="${arg#--}"
+			case "$opt" in
+				help)
+					help
+					;;
+				json)
+					jq="jq"
+					;;
+				yaml)
+					jq="yq --yaml-output"
+					;;
+				raw)
+					jq="cat"
+					jq_args=()
+					;;
+				key)
+					optarg="${args[$((i+1))]}"
+					i="$(($i+1))"
+					key="$optarg"
+					;;
+				*)
+					client_args+=("$arg")
+					;;
+			esac
+			;;
+		-h)
+			help
+			;;
+		*)
+			client_args+=("$arg")
+			;;
+	esac
+	
+	i="$(($i+1))"
+done
+
+
+[ -z "$key" ] && error "No key nor keyname provided!!! You have to  provide on command line option '--key ...'"
+
+DIR=$(dirname -- "${BASH_SOURCE[0]}")
+
+echo "$key" | grep -E "^addy_io_[A-Za-z0-9]{48}$" > /dev/null || {
+	keyname="$key"
+	key=$("${DIR}/addy-keys" select "$keyname")
+	[ -z "$key" ] && error "Invalid key or keyname '$keyname'!!!"
+}
+
+# echo "$key"
+client "${client_args[@]}" | $jq "${jq_args[@]}"
